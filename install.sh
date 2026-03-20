@@ -20,15 +20,43 @@ need_cmd() {
   fi
 }
 
+ensure_cmd() {
+  # Args:
+  #   $1 = command to check in PATH
+  #   $2 = brew package to install (only used when brew exists)
+  local cmd="$1"
+  local pkg="${2:-}"
+
+  if command -v "$cmd" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if command -v brew >/dev/null 2>&1; then
+    if [[ -z "$pkg" ]]; then
+      err "Missing $cmd, but no brew package mapping provided."
+      return 1
+    fi
+
+    warn "Missing $cmd. Installing with Homebrew: $pkg"
+    brew install "$pkg"
+    return 0
+  fi
+
+  err "Missing required command: $cmd"
+  err "Install it manually, or install Homebrew then re-run this script."
+  return 1
+}
+
 node_major() {
   # Example: v20.11.1 -> 20
   node -v | sed -E 's/^v([0-9]+).*/\1/'
 }
 
 require_env() {
-  need_cmd node
-  need_cmd npm
-  need_cmd git
+  # If any command is missing from PATH, auto-install via Homebrew (when present)
+  ensure_cmd node node
+  ensure_cmd npm node
+  ensure_cmd git git
 
   local major
   major="$(node_major)"
@@ -114,7 +142,9 @@ main() {
     log "Installed. Checking version..."
     nbuild --version || true
   else
-    warn "Installed, but `nbuild` is not in PATH. You may need to restart your shell."
+    warn "Installed, but nbuild is not in PATH."
+    warn "Your global npm bin is: $(npm bin -g 2>/dev/null || true)"
+    warn "Add it to PATH or restart your shell."
   fi
 }
 
