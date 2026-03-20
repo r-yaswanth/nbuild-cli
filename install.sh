@@ -13,6 +13,55 @@ err() {
   printf "%s\n" "ERROR: $*" >&2
 }
 
+SPINNER_CHARS='|/-\'
+spinner_active=0
+spinner_pid=""
+
+run_step() {
+  local msg="$1"
+  shift
+  local log_file
+  log_file="$(mktemp)"
+
+  spinner_active=1
+  (
+    while [[ "$spinner_active" -eq 1 ]]; do
+      for c in '|' '/' '-' '\\'; do
+        printf "\r%s %s" "$c" "$msg"
+        sleep 0.12
+      done
+    done
+  ) &
+  spinner_pid="$!"
+
+  set +e
+  "$@" >"$log_file" 2>&1
+  local code=$?
+  set -e
+
+  spinner_active=0
+  if [[ -n "$spinner_pid" ]]; then
+    wait "$spinner_pid" 2>/dev/null || true
+  fi
+  spinner_pid=""
+
+  if [[ "$code" -eq 0 ]]; then
+    printf "\r✅ %s\n" "$msg"
+    rm -f "$log_file" >/dev/null 2>&1 || true
+    return 0
+  fi
+
+  printf "\r❌ %s\n" "$msg"
+  err "Command failed: $*"
+  err "---- output (tail) ----"
+  tail -n 40 "$log_file" >&2 || true
+  err "-----------------------"
+  rm -f "$log_file" >/dev/null 2>&1 || true
+  return "$code"
+}
+
+PACKAGE_NAME="nlearn-build"
+
 need_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
     err "Missing required command: $1"
@@ -31,20 +80,25 @@ ensure_cmd() {
     return 0
   fi
 
-  if command -v brew >/dev/null 2>&1; then
-    if [[ -z "$pkg" ]]; then
-      err "Missing $cmd, but no brew package mapping provided."
-      return 1
-    fi
-
-    warn "Missing $cmd. Installing with Homebrew: $pkg"
-    brew install "$pkg"
-    return 0
+  if [[ -z "$pkg" ]]; then
+    err "Missing $cmd, but no brew package mapping provided."
+    return 1
   fi
 
-  err "Missing required command: $cmd"
-  err "Install it manually, or install Homebrew then re-run this script."
-  return 1
+  # Install Homebrew automatically if missing (best-effort).
+  if ! command -v brew >/dev/null 2>&1; then
+    if command -v curl >/dev/null 2>&1; then
+      run_step "Installing Homebrew" bash -lc \
+        "/bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
+    else
+      err "Homebrew and curl are both missing. Install Homebrew manually."
+      return 1
+    fi
+  fi
+
+  warn "Missing $cmd. Installing with Homebrew: $pkg"
+  brew install "$pkg"
+  return 0
 }
 
 node_major() {
@@ -66,9 +120,77 @@ require_env() {
   fi
   # Node 18+ is the safe baseline for modern npm + fetch behavior.
   if (( major < 18 )); then
-    err "Node.js >= 18 is required. Found: $(node -v)"
+    run_step "Upgrading Node.js (>=18) via brew" brew install node
+  fi
+}
+
+ensure_firebase() {
+  if command -v firebase >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local npm_prefix="$HOME/.npm-global"
+  mkdir -p "$npm_prefix"
+
+  # Use a fresh temp cache for this install so corrupted caches
+  # (like tar ENOENT) don't break the install.
+  local tmp_cache
+  tmp_cache="$(mktemp -d)"
+
+  # Install firebase-tools in user-local prefix to keep it clean.
+  run_step "Installing Firebase CLI (firebase-tools)" \
+    env npm_config_prefix="$npm_prefix" npm install -g firebase-tools --no-audit --no-fund --cache "$tmp_cache"
+
+  rm -rf "$tmp_cache" >/dev/null 2>&1 || true
+
+  export PATH="$npm_prefix/bin:$PATH"
+
+  if ! command -v firebase >/dev/null 2>&1; then
+    err "Firebase CLI installed, but `firebase` command not found in PATH."
     return 1
   fi
+
+  return 0
+}
+
+ensure_flutter_and_flutterfire() {
+  if command -v flutterfire >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local FLUTTER_HOME="${NBBUILD_FLUTTER_HOME:-$HOME/flutter}"
+
+  # Install Flutter SDK if flutter command is missing.
+  if ! command -v flutter >/dev/null 2>&1; then
+    if [[ ! -d "$FLUTTER_HOME/.git" ]]; then
+      run_step "Cloning Flutter SDK (stable)" \
+        git clone https://github.com/flutter/flutter.git -b stable "$FLUTTER_HOME"
+    else
+      run_step "Updating Flutter SDK" \
+        git -C "$FLUTTER_HOME" fetch --all --prune
+      run_step "Checking out Flutter stable" \
+        git -C "$FLUTTER_HOME" checkout stable
+    fi
+  fi
+
+  export PATH="$FLUTTER_HOME/bin:$PATH"
+
+  run_step "Running flutter precache (for tooling)" \
+    "$FLUTTER_HOME/bin/flutter" precache
+
+  # Activate flutterfire_cli (provides `flutterfire`)
+  export PATH="$HOME/.pub-cache/bin:$PATH"
+  run_step "Activating flutterfire_cli" \
+    "$FLUTTER_HOME/bin/dart" pub global activate flutterfire_cli
+
+  export PATH="$HOME/.pub-cache/bin:$PATH"
+
+  if ! command -v flutterfire >/dev/null 2>&1; then
+    err "`flutterfire` not found even after activation."
+    return 1
+  fi
+
+  return 0
 }
 
 detect_origin_url() {
@@ -103,6 +225,14 @@ detect_origin_url() {
 main() {
   require_env
 
+  log "Ensuring Firebase CLI..."
+  ensure_firebase
+  log "Ensuring flutterfire..."
+  ensure_flutter_and_flutterfire
+
+  run_step "Checking firebase version" firebase --version
+  run_step "Checking flutterfire version" flutterfire --version
+
   # Default git source for this CLI.
   # Override via env vars if you want.
   local DEFAULT_GIT_URL="https://github.com/r-yaswanth/nbuild-cli.git"
@@ -128,24 +258,65 @@ main() {
     fi
   fi
 
-  log "Installing nbuild from: $git_url${git_ref:+#${git_ref}}"
-  # npm git install spec: <repo-url>#<ref> works for branches/tags/commits.
-  local spec="$git_url"
-  if [[ -n "$git_ref" ]]; then
-    spec="${git_url}#${git_ref}"
+  local workdir="${NBBUILD_WORKDIR:-$HOME/.nbuild-cli-src}"
+  local bin_dir="${NBBUILD_BIN_DIR:-$HOME/.nbuild/bin}"
+  local install_src="$workdir"
+  local tmp_cache
+
+  log "Cloning/updating source..."
+  log "Source dir: $install_src"
+  log "Installing binary to: $bin_dir"
+
+  if [[ -d "$install_src/.git" ]]; then
+    run_step "Updating CLI source (git fetch)" \
+      git -C "$install_src" fetch --all --prune
+  else
+    rm -rf "$install_src"
+    run_step "Cloning CLI source" \
+      git clone "$git_url" "$install_src"
   fi
 
-  # Install globally
-  npm install -g "$spec"
+  if [[ -n "$git_ref" ]]; then
+    if ! git -C "$install_src" checkout "$git_ref" >/dev/null 2>&1; then
+      warn "Could not checkout ref '$git_ref' directly; fetching it..."
+      run_step "Fetching git tags" git -C "$install_src" fetch --all --tags
+      run_step "Checking out git ref" git -C "$install_src" checkout "$git_ref"
+    fi
+  fi
+
+  tmp_cache="$(mktemp -d)"
+  trap 'rm -rf "$tmp_cache" >/dev/null 2>&1 || true' EXIT
+
+  run_step "Installing CLI npm deps" bash -lc \
+    "cd \"$install_src\" && npm install --no-audit --no-fund --cache \"$tmp_cache\" --prefix \"$install_src\""
+
+  run_step "Building CLI (tsc + dist)" bash -lc \
+    "cd \"$install_src\" && npm run build --silent"
+
+  local bin_src="$install_src/dist/index.js"
+  if [[ ! -f "$bin_src" ]]; then
+    err "Build did not produce dist/index.js at: $bin_src"
+    exit 1
+  fi
+
+  mkdir -p "$bin_dir"
+  ln -sf "$bin_src" "$bin_dir/nbuild"
+  chmod +x "$bin_dir/nbuild" 2>/dev/null || true
+
+  export PATH="$bin_dir:$PATH"
 
   if command -v nbuild >/dev/null 2>&1; then
-    log "Installed. Checking version..."
+    log "Installed. Version:"
     nbuild --version || true
   else
-    warn "Installed, but nbuild is not in PATH."
-    warn "Your global npm bin is: $(npm bin -g 2>/dev/null || true)"
-    warn "Add it to PATH or restart your shell."
+    warn "Binary linked, but nbuild not found in PATH for this session."
+    warn "Add to PATH:"
+    warn "  export PATH=\"$bin_dir:\$PATH\""
   fi
+
+  log "Done."
+  log "CLI source: $workdir"
+  log "CLI binary: $bin_dir/nbuild"
 }
 
 main "$@"
