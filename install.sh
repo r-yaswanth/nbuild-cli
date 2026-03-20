@@ -23,9 +23,8 @@ run_step() {
   local log_file
   log_file="$(mktemp)"
 
-  spinner_active=1
   (
-    while [[ "$spinner_active" -eq 1 ]]; do
+    while true; do
       for c in '|' '/' '-' '\\'; do
         printf "\r%s %s" "$c" "$msg"
         sleep 0.12
@@ -39,8 +38,8 @@ run_step() {
   local code=$?
   set -e
 
-  spinner_active=0
   if [[ -n "$spinner_pid" ]]; then
+    kill "$spinner_pid" 2>/dev/null || true
     wait "$spinner_pid" 2>/dev/null || true
   fi
   spinner_pid=""
@@ -76,9 +75,8 @@ run_step_timeout() {
   local log_file
   log_file="$(mktemp)"
 
-  spinner_active=1
   (
-    while [[ "$spinner_active" -eq 1 ]]; do
+    while true; do
       for c in '|' '/' '-' '\\'; do
         printf "\r%s %s" "$c" "$msg"
         sleep 0.12
@@ -98,13 +96,14 @@ run_step_timeout() {
       wait "$cmd_pid" 2>/dev/null || true
       local code=124
       set -e
-      spinner_active=0
       if [[ -n "$spinner_pid" ]]; then
+        kill "$spinner_pid" 2>/dev/null || true
         wait "$spinner_pid" 2>/dev/null || true
       fi
       spinner_pid=""
       printf "\r❌ %s\n" "$msg"
-      rm -f "$log_file" >/dev/null 2>&1 || true
+      err "Timed out after ${timeout_secs}s."
+      err "Debug log kept at: $log_file"
       return "$code"
     fi
     sleep 1
@@ -115,8 +114,8 @@ run_step_timeout() {
   local code=$?
   set -e
 
-  spinner_active=0
   if [[ -n "$spinner_pid" ]]; then
+    kill "$spinner_pid" 2>/dev/null || true
     wait "$spinner_pid" 2>/dev/null || true
   fi
   spinner_pid=""
