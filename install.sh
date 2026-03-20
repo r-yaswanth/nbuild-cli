@@ -60,6 +60,82 @@ run_step() {
   return "$code"
 }
 
+run_step_timeout() {
+  # Args:
+  #   $1 = message
+  #   $2 = timeout seconds (integer)
+  #   $@ = command
+  local msg="$1"
+  local timeout_secs="$2"
+  shift 2
+
+  if [[ -z "$timeout_secs" || ! "$timeout_secs" =~ ^[0-9]+$ ]]; then
+    return 1
+  fi
+
+  local log_file
+  log_file="$(mktemp)"
+
+  spinner_active=1
+  (
+    while [[ "$spinner_active" -eq 1 ]]; do
+      for c in '|' '/' '-' '\\'; do
+        printf "\r%s %s" "$c" "$msg"
+        sleep 0.12
+      done
+    done
+  ) &
+  spinner_pid="$!"
+
+  set +e
+  "$@" >"$log_file" 2>&1 &
+  local cmd_pid=$!
+
+  local elapsed=0
+  while kill -0 "$cmd_pid" 2>/dev/null; do
+    if (( elapsed >= timeout_secs )); then
+      kill -9 "$cmd_pid" 2>/dev/null || true
+      wait "$cmd_pid" 2>/dev/null || true
+      local code=124
+      set -e
+      spinner_active=0
+      if [[ -n "$spinner_pid" ]]; then
+        wait "$spinner_pid" 2>/dev/null || true
+      fi
+      spinner_pid=""
+      printf "\r❌ %s\n" "$msg"
+      rm -f "$log_file" >/dev/null 2>&1 || true
+      return "$code"
+    fi
+    sleep 1
+    elapsed=$((elapsed + 1))
+  done
+
+  wait "$cmd_pid"
+  local code=$?
+  set -e
+
+  spinner_active=0
+  if [[ -n "$spinner_pid" ]]; then
+    wait "$spinner_pid" 2>/dev/null || true
+  fi
+  spinner_pid=""
+
+  if [[ "$code" -eq 0 ]]; then
+    printf "\r✅ %s\n" "$msg"
+    rm -f "$log_file" >/dev/null 2>&1 || true
+    return 0
+  fi
+
+  printf "\r❌ %s\n" "$msg"
+  err "Command failed: $*"
+  err "---- output (tail) ----"
+  tail -n 40 "$log_file" >&2 || true
+  err "-----------------------"
+  rm -f "$log_file" >/dev/null 2>&1 || true
+  return "$code"
+}
+
 PACKAGE_NAME="nlearn-build"
 
 need_cmd() {
@@ -230,8 +306,14 @@ main() {
   log "Ensuring flutterfire..."
   ensure_flutter_and_flutterfire
 
-  run_step "Checking firebase version" firebase --version
-  run_step "Checking flutterfire version" flutterfire --version
+  # Some environments may make `firebase --version` hang (rare).
+  # Do a timeout so installation still completes cleanly.
+  if ! run_step_timeout "Checking firebase version" 20 firebase --version; then
+    warn "firebase --version timed out; continuing install."
+  fi
+  if ! run_step_timeout "Checking flutterfire version" 20 flutterfire --version; then
+    warn "flutterfire --version timed out; continuing install."
+  fi
 
   # Default git source for this CLI.
   # Override via env vars if you want.
