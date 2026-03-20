@@ -1,6 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+VERBOSE=0
+for a in "$@"; do
+  if [[ "$a" == "--verbose" || "$a" == "-v" ]]; then
+    VERBOSE=1
+  fi
+done
+
+if [[ "${NBBUILD_VERBOSE:-0}" == "1" ]]; then
+  VERBOSE=1
+fi
+
+if [[ "$VERBOSE" -eq 1 ]]; then
+  set -x
+fi
+
 log() {
   printf "%s\n" "$*"
 }
@@ -22,6 +37,14 @@ run_step() {
   shift
   local log_file
   log_file="$(mktemp)"
+
+  if [[ "$VERBOSE" -eq 1 ]]; then
+    echo
+    echo "STEP: $msg"
+    echo "+ $*"
+    "$@"
+    return $?
+  fi
 
   (
     while true; do
@@ -74,6 +97,18 @@ run_step_timeout() {
 
   local log_file
   log_file="$(mktemp)"
+
+  if [[ "$VERBOSE" -eq 1 ]]; then
+    echo
+    echo "STEP (timeout ${timeout_secs}s): $msg"
+    echo "+ $*"
+    if command -v timeout >/dev/null 2>&1; then
+      timeout "${timeout_secs}s" "$@"
+      return $?
+    fi
+    "$@"
+    return $?
+  fi
 
   (
     while true; do
@@ -233,10 +268,22 @@ ensure_flutter_and_flutterfire() {
     return 0
   fi
 
+  # Prefer existing Flutter SDK if `flutter` is already in PATH.
+  local flutter_bin
+  flutter_bin="$(command -v flutter 2>/dev/null || true)"
+
   local FLUTTER_HOME="${NBBUILD_FLUTTER_HOME:-$HOME/flutter}"
+  if [[ -n "$flutter_bin" ]]; then
+    # <home>/bin/flutter -> <home>
+    local flutter_dir
+    flutter_dir="$(cd "$(dirname "$flutter_bin")/.." >/dev/null 2>&1 && pwd)"
+    if [[ -n "$flutter_dir" ]]; then
+      FLUTTER_HOME="$flutter_dir"
+    fi
+  fi
 
   # Install Flutter SDK if flutter command is missing.
-  if ! command -v flutter >/dev/null 2>&1; then
+  if [[ -z "$flutter_bin" ]]; then
     if [[ ! -d "$FLUTTER_HOME/.git" ]]; then
       run_step "Cloning Flutter SDK (stable)" \
         git clone https://github.com/flutter/flutter.git -b stable "$FLUTTER_HOME"
@@ -246,12 +293,21 @@ ensure_flutter_and_flutterfire() {
       run_step "Checking out Flutter stable" \
         git -C "$FLUTTER_HOME" checkout stable
     fi
+
+    export PATH="$FLUTTER_HOME/bin:$PATH"
   fi
 
+  # Ensure PATH contains the detected Flutter SDK.
   export PATH="$FLUTTER_HOME/bin:$PATH"
 
+  local precache_bin
+  precache_bin="$(command -v flutter 2>/dev/null || true)"
+  if [[ -z "$precache_bin" ]]; then
+    precache_bin="$FLUTTER_HOME/bin/flutter"
+  fi
+
   run_step "Running flutter precache (for tooling)" \
-    "$FLUTTER_HOME/bin/flutter" precache
+    "$precache_bin" precache
 
   # Activate flutterfire_cli (provides `flutterfire`)
   export PATH="$HOME/.pub-cache/bin:$PATH"
