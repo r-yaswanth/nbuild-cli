@@ -11,6 +11,7 @@ import { runCrashesCommand } from "./crashes.js";
 import { runBuildPipeline } from "./pipeline.js";
 import { runPostBuild } from "./post-build.js";
 import { gatherBuildConfig } from "./prompts.js";
+import { runUpdateCommand } from "./update.js";
 import { runFirebaseSetupCommand, runInitialSetup } from "./setup.js";
 function showHelp() {
     console.log(`
@@ -23,6 +24,7 @@ function showHelp() {
     list                List builds from Firebase App Distribution (interactive)
     archives            Browse locally archived builds (symbols, source, release notes)
     crash               Query Crashlytics (via BigQuery) for a selected app version
+    update              Update the CLI (npm if available, else git)
 
   Options
     --project <path>       Override the nlearn project directory
@@ -32,6 +34,9 @@ function showHelp() {
     --flutter-args <...>  Extra args appended to \`flutter build\`
     --flutter-arg <...>   Extra arg appended to \`flutter build\` (repeatable)
     -v, --verbose          Stream command output to the terminal
+    --yes                  Update without confirmation (update command only)
+    --git-url <url>       Git URL for update fallback (update command only)
+    --git-branch <name>  Git branch for update fallback (update command only)
     --firebase-setup       Re-run Firebase CLI setup (install & login)
     -h, --help             Show this help message
     --version, -V          Print version number
@@ -139,6 +144,13 @@ async function main() {
     }
     const verbose = process.argv.includes("--verbose") || process.argv.includes("-v");
     setVerbose(verbose);
+    // Handle update subcommand
+    if (process.argv[2] === "update") {
+        p.intro(pc.bgCyan(pc.black(" ⬆️  nlearn build update ")));
+        await runUpdateCommand();
+        p.outro(pc.green("Done."));
+        return;
+    }
     // Handle list subcommand
     if (process.argv[2] === "list") {
         p.intro(pc.bgCyan(pc.black(" 🔨 nlearn build ")));
