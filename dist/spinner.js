@@ -1,0 +1,61 @@
+import pc from "picocolors";
+const CLOCK_FRAMES = [
+    "🕐", "🕑", "🕒", "🕓", "🕔", "🕕",
+    "🕖", "🕗", "🕘", "🕙", "🕚", "🕛",
+];
+function formatElapsed(ms) {
+    const totalSecs = Math.floor(ms / 1000);
+    if (totalSecs < 60)
+        return `${totalSecs}s`;
+    const mins = Math.floor(totalSecs / 60);
+    const secs = totalSecs % 60;
+    return secs > 0 ? `${mins}m ${secs}s` : `${mins}m`;
+}
+export function clockSpinner() {
+    let interval = null;
+    let frameIdx = 0;
+    let startTime = 0;
+    let currentMsg = "";
+    function clear() {
+        process.stdout.write("\r\x1b[K");
+    }
+    function renderLine() {
+        const elapsed = pc.dim(formatElapsed(Date.now() - startTime));
+        process.stdout.write(`${CLOCK_FRAMES[frameIdx]} ${currentMsg}  ${elapsed}`);
+    }
+    return {
+        start(msg) {
+            currentMsg = msg;
+            startTime = Date.now();
+            frameIdx = 0;
+            renderLine();
+            interval = setInterval(() => {
+                frameIdx = (frameIdx + 1) % CLOCK_FRAMES.length;
+                clear();
+                renderLine();
+            }, 120);
+        },
+        stop(msg) {
+            if (interval) {
+                clearInterval(interval);
+                interval = null;
+            }
+            const elapsed = pc.dim(formatElapsed(Date.now() - startTime));
+            clear();
+            console.log(`${msg}  ${elapsed}`);
+        },
+        message(msg) {
+            currentMsg = msg;
+            if (interval) {
+                clearInterval(interval);
+            }
+            clear();
+            renderLine();
+            interval = setInterval(() => {
+                frameIdx = (frameIdx + 1) % CLOCK_FRAMES.length;
+                clear();
+                renderLine();
+            }, 120);
+        },
+    };
+}
