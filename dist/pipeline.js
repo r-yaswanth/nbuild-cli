@@ -2,7 +2,7 @@ import * as p from "@clack/prompts";
 import fs from "node:fs";
 import path from "node:path";
 import pc from "picocolors";
-import { buildArchiveDir, FLAVOR_ENTRYPOINTS } from "./config.js";
+import { FLAVOR_ENTRYPOINTS, buildArchiveDir } from "./config.js";
 import { exec, execShell, isVerbose, lastErrorLines } from "./exec.js";
 import { clockSpinner } from "./spinner.js";
 const SKIP_DIRS = new Set(["build", ".dart_tool", ".pub-cache", "node_modules", ".git"]);
@@ -56,7 +56,7 @@ function findBuildRunnerDirs(root) {
     return result;
 }
 function buildSteps(config) {
-    const { flavor, platforms, networkLogging, includeBuildInfo, obfuscate, commitId, gitBranch, buildDate, projectRoot, flutterExtraArgs } = config;
+    const { flavor, platforms, networkLogging, screenshotEnabled, includeBuildInfo, obfuscate, commitId, gitBranch, buildDate, projectRoot, flutterExtraArgs } = config;
     const entrypoint = FLAVOR_ENTRYPOINTS[flavor];
     const buildInfoDefines = includeBuildInfo
         ? ["--dart-define", `COMMIT_ID=${commitId}`, "--dart-define", `BUILD_DATE=${buildDate}`, "--dart-define", `GIT_BRANCH=${gitBranch}`]
@@ -75,11 +75,14 @@ function buildSteps(config) {
             run: () => exec("flutter", ["pub", "get"], { cwd: projectRoot }),
         },
         {
-            startMsg: "🍫 Updating CocoaPods",
-            successMsg: "🍫 Pod update completed",
-            run: () => execShell("cd ios && pod update Firebase/CoreOnly", {
-                cwd: projectRoot,
-            }),
+            startMsg: "🍫 Cleaning & reinstalling CocoaPods",
+            successMsg: "🍫 CocoaPods install completed",
+            run: () => execShell([
+                "cd ios &&",
+                "rm -rf build/ Podfile.lock .symlinks/ Pods/ &&",
+                "pod deintegrate &&",
+                "pod install --allow-root --repo-update --clean-install",
+            ].join(" "), { cwd: projectRoot }),
         },
         ...findBuildRunnerDirs(projectRoot).map((dir) => {
             const label = path.relative(projectRoot, dir) || ".";
@@ -104,6 +107,8 @@ function buildSteps(config) {
                     entrypoint,
                     "--dart-define",
                     `NETWORK_LOGS_ENABLED=${networkLogging}`,
+                    "--dart-define",
+                    `SCREENSHOT_ENABLED=${screenshotEnabled}`,
                     ...buildIdDefines,
                     ...obfuscateFlags,
                     ...buildInfoDefines,
@@ -133,6 +138,8 @@ function buildSteps(config) {
                     entrypoint,
                     "--dart-define",
                     `NETWORK_LOGS_ENABLED=${networkLogging}`,
+                    "--dart-define",
+                    `SCREENSHOT_ENABLED=${screenshotEnabled}`,
                     ...buildIdDefines,
                     ...obfuscateFlags,
                     ...buildInfoDefines,

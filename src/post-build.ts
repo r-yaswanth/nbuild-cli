@@ -37,7 +37,7 @@ import { clockSpinner } from "./spinner.js";
 
 // ── Distribution Prompts ───────────────────────────────────────────
 
-async function promptForDistribution(config: BuildConfig): Promise<void> {
+export async function promptForDistribution(config: BuildConfig): Promise<void> {
   if (!config.firebaseReady) {
     p.log.warn(
       `⚠️  Firebase not configured. Run ${pc.cyan("nlearn-build --firebase-setup")} to enable distribution.`,
@@ -231,11 +231,13 @@ async function postBuildAndroid(config: BuildConfig): Promise<void> {
     p.log.success("📂 Output folder opened in Finder");
   }
 
+  if (!config.distributeToFirebase) {
+    return;
+  }
+
   if (!appId) {
-    if (config.distributeToFirebase) {
-      p.log.warn("⚠️  Could not read Firebase App ID from android/app/google-services.json");
-      p.log.warn("⚠️  Skipping Crashlytics upload and Firebase distribution for Android");
-    }
+    p.log.warn("⚠️  Could not read Firebase App ID from android/app/google-services.json");
+    p.log.warn("⚠️  Skipping Crashlytics upload and Firebase distribution for Android");
     return;
   }
 
@@ -333,7 +335,7 @@ async function postBuildIos(config: BuildConfig): Promise<void> {
     p.log.success("📂 iOS IPA opened in Finder");
   }
 
-  const iosAppId = iosFirebaseAppId(projectRoot);
+  const iosAppId = config.distributeToFirebase ? iosFirebaseAppId(projectRoot) : null;
 
   if (!iosAppId) {
     if (config.distributeToFirebase) {
@@ -408,9 +410,6 @@ async function postBuildIos(config: BuildConfig): Promise<void> {
 // ── Entry ──────────────────────────────────────────────────────────
 
 export async function runPostBuild(config: BuildConfig): Promise<void> {
-  // Ask user if they want to distribute after successful builds
-  await promptForDistribution(config);
-
   if (config.platforms.includes("android")) {
     await postBuildAndroid(config);
   }

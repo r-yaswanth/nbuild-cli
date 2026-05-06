@@ -12,6 +12,7 @@ export interface BuildConfig {
   flavor: Flavor;
   platforms: Platform[];
   networkLogging: boolean;
+  screenshotEnabled: boolean;
   includeBuildInfo: boolean;
   distributeToFirebase: boolean;
   releaseNotes: string;

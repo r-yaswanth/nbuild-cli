@@ -12,7 +12,7 @@ import { runFirebaseLogin, runFirebaseLogout } from "./setup.js";
 import { searchMultiselect } from "./search-select.js";
 import { clockSpinner } from "./spinner.js";
 // ── Distribution Prompts ───────────────────────────────────────────
-async function promptForDistribution(config) {
+export async function promptForDistribution(config) {
     if (!config.firebaseReady) {
         p.log.warn(`⚠️  Firebase not configured. Run ${pc.cyan("nlearn-build --firebase-setup")} to enable distribution.`);
         return;
@@ -175,11 +175,12 @@ async function postBuildAndroid(config) {
         await exec("open", [out], { cwd: projectRoot });
         p.log.success("📂 Output folder opened in Finder");
     }
+    if (!config.distributeToFirebase) {
+        return;
+    }
     if (!appId) {
-        if (config.distributeToFirebase) {
-            p.log.warn("⚠️  Could not read Firebase App ID from android/app/google-services.json");
-            p.log.warn("⚠️  Skipping Crashlytics upload and Firebase distribution for Android");
-        }
+        p.log.warn("⚠️  Could not read Firebase App ID from android/app/google-services.json");
+        p.log.warn("⚠️  Skipping Crashlytics upload and Firebase distribution for Android");
         return;
     }
     // Upload symbols to Firebase
@@ -266,7 +267,7 @@ async function postBuildIos(config) {
         await exec("open", [out], { cwd: projectRoot });
         p.log.success("📂 iOS IPA opened in Finder");
     }
-    const iosAppId = iosFirebaseAppId(projectRoot);
+    const iosAppId = config.distributeToFirebase ? iosFirebaseAppId(projectRoot) : null;
     if (!iosAppId) {
         if (config.distributeToFirebase) {
             p.log.warn("⚠️  Could not read Firebase App ID from ios/Runner/GoogleService-Info.plist");
@@ -329,8 +330,6 @@ async function postBuildIos(config) {
 }
 // ── Entry ──────────────────────────────────────────────────────────
 export async function runPostBuild(config) {
-    // Ask user if they want to distribute after successful builds
-    await promptForDistribution(config);
     if (config.platforms.includes("android")) {
         await postBuildAndroid(config);
     }

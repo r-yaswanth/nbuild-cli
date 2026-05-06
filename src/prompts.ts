@@ -22,6 +22,7 @@ import {
 import { checkFirebaseAuth, runFirebaseLogin, runFirebaseLogout } from "./setup.js";
 import { searchMultiselect } from "./search-select.js";
 import { exec } from "./exec.js";
+import { promptForDistribution } from "./post-build.js";
 
 function readVersion(projectRoot: string): string {
   try {
@@ -153,6 +154,20 @@ export async function gatherBuildConfig(
     networkLogging = enableLogs;
   }
 
+  // ── Screenshot ────────────────────────────────────────────────
+
+  const enableScreenshot = await p.confirm({
+    message: "📸 Enable screenshot?",
+    initialValue: true,
+  });
+
+  if (p.isCancel(enableScreenshot)) {
+    p.cancel("👋 Build cancelled.");
+    process.exit(0);
+  }
+
+  const screenshotEnabled = enableScreenshot;
+
   // ── Build Info (commit hash + build date) ──────────────────────
 
   const includeBuildInfo = await p.confirm({
@@ -196,6 +211,20 @@ export async function gatherBuildConfig(
     buildDate = `${day} ${month} ${now.getFullYear()}`;
   }
 
+  const config: BuildConfig = {
+    flavor, platforms, networkLogging, screenshotEnabled, includeBuildInfo, obfuscate,
+    distributeToFirebase: false, releaseNotes: "", testerGroups: [], testerEmails: [],
+    buildId,
+    builderEmail,
+    commitId, gitBranch, buildDate, projectRoot, firebaseReady, archivesPath,
+    version,
+    flutterExtraArgs,
+  };
+
+  // ── Distribution (ask before build) ────────────────────────────
+
+  await promptForDistribution(config);
+
   // ── Summary ───────────────────────────────────────────────────
 
   const platformLabel = platforms
@@ -209,7 +238,9 @@ export async function gatherBuildConfig(
     `Entrypoint       ${pc.dim(FLAVOR_ENTRYPOINTS[flavor])}`,
     `Platforms        ${pc.green(platformLabel)}`,
     `Network logging  ${networkLogging ? pc.yellow("enabled") : pc.dim("disabled")}`,
+    `Screenshot       ${screenshotEnabled ? pc.green("enabled") : pc.dim("disabled")}`,
     `Obfuscate        ${obfuscate ? pc.yellow("enabled") : pc.dim("disabled")}`,
+    `Distribute       ${config.distributeToFirebase ? pc.green("Firebase App Distribution") : pc.dim("manual (no distribution)")}`,
   ];
 
   if (includeBuildInfo) {
@@ -222,13 +253,5 @@ export async function gatherBuildConfig(
 
   p.note(summaryLines.join("\n"), "📦 Build configuration");
 
-  return {
-    flavor, platforms, networkLogging, includeBuildInfo, obfuscate,
-    distributeToFirebase: false, releaseNotes: "", testerGroups: [], testerEmails: [],
-    buildId,
-    builderEmail,
-    commitId, gitBranch, buildDate, projectRoot, firebaseReady, archivesPath,
-    version,
-    flutterExtraArgs,
-  };
+  return config;
 }

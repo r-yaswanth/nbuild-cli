@@ -1,7 +1,7 @@
 import * as p from "@clack/prompts";
 import fs from "node:fs";
-import path from "node:path";
 import { createRequire } from "node:module";
+import path from "node:path";
 import pc from "picocolors";
 import { exec, isVerbose, lastErrorLines } from "./exec.js";
 const PACKAGE_NAME = "nlearn-build";

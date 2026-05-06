@@ -6,6 +6,7 @@ import pc from "picocolors";
 import { FLAVOR_ENTRYPOINTS, } from "./config.js";
 import { checkFirebaseAuth } from "./setup.js";
 import { exec } from "./exec.js";
+import { promptForDistribution } from "./post-build.js";
 function readVersion(projectRoot) {
     try {
         const pubspec = fs.readFileSync(path.join(projectRoot, "pubspec.yaml"), "utf-8");
@@ -108,6 +109,16 @@ export async function gatherBuildConfig(projectRoot, firebaseReady = true, obfus
         }
         networkLogging = enableLogs;
     }
+    // ── Screenshot ────────────────────────────────────────────────
+    const enableScreenshot = await p.confirm({
+        message: "📸 Enable screenshot?",
+        initialValue: true,
+    });
+    if (p.isCancel(enableScreenshot)) {
+        p.cancel("👋 Build cancelled.");
+        process.exit(0);
+    }
+    const screenshotEnabled = enableScreenshot;
     // ── Build Info (commit hash + build date) ──────────────────────
     const includeBuildInfo = await p.confirm({
         message: "📋 Include build info (commit hash, build date & git branch)?",
@@ -143,6 +154,17 @@ export async function gatherBuildConfig(projectRoot, firebaseReady = true, obfus
         const month = now.toLocaleString("en-US", { month: "short" }).toUpperCase();
         buildDate = `${day} ${month} ${now.getFullYear()}`;
     }
+    const config = {
+        flavor, platforms, networkLogging, screenshotEnabled, includeBuildInfo, obfuscate,
+        distributeToFirebase: false, releaseNotes: "", testerGroups: [], testerEmails: [],
+        buildId,
+        builderEmail,
+        commitId, gitBranch, buildDate, projectRoot, firebaseReady, archivesPath,
+        version,
+        flutterExtraArgs,
+    };
+    // ── Distribution (ask before build) ────────────────────────────
+    await promptForDistribution(config);
     // ── Summary ───────────────────────────────────────────────────
     const platformLabel = platforms
         .map((pl) => (pl === "android" ? "🤖 Android" : "🍎 iOS"))
@@ -154,19 +176,13 @@ export async function gatherBuildConfig(projectRoot, firebaseReady = true, obfus
         `Entrypoint       ${pc.dim(FLAVOR_ENTRYPOINTS[flavor])}`,
         `Platforms        ${pc.green(platformLabel)}`,
         `Network logging  ${networkLogging ? pc.yellow("enabled") : pc.dim("disabled")}`,
+        `Screenshot       ${screenshotEnabled ? pc.green("enabled") : pc.dim("disabled")}`,
         `Obfuscate        ${obfuscate ? pc.yellow("enabled") : pc.dim("disabled")}`,
+        `Distribute       ${config.distributeToFirebase ? pc.green("Firebase App Distribution") : pc.dim("manual (no distribution)")}`,
     ];
     if (includeBuildInfo) {
         summaryLines.push(`Branch           ${pc.green(gitBranch)}`, `Commit           ${pc.dim(commitId)}`, `Build date       ${pc.dim(buildDate)}`);
     }
     p.note(summaryLines.join("\n"), "📦 Build configuration");
-    return {
-        flavor, platforms, networkLogging, includeBuildInfo, obfuscate,
-        distributeToFirebase: false, releaseNotes: "", testerGroups: [], testerEmails: [],
-        buildId,
-        builderEmail,
-        commitId, gitBranch, buildDate, projectRoot, firebaseReady, archivesPath,
-        version,
-        flutterExtraArgs,
-    };
+    return config;
 }
